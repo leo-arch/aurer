@@ -14,7 +14,7 @@ is aimed to do.
 
 1. Clone or download the project files (**no compilation nor installation** is required)
 
-       $ git clone https://github.com/leo-arch/aurer/new/master
+       $ git clone https://github.com/leo-arch/aurer
 
 2. Excecute the script:
     
