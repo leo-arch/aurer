@@ -32,3 +32,6 @@ is aimed to do.
 **-S** [pkg_name]    Download, build and install "pkg_name"
 
 **-u**               Check installed AUR packages for updates
+
+### NOTE:
+Being only a beta version, Aurer does not handle packages version yet. Feel free to modify it to achieve this or wathever you want.
