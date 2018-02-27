@@ -34,4 +34,4 @@ is aimed to do.
 **-u**               Check installed AUR packages for updates
 
 ### NOTE:
-Being only a beta version, Aurer does not handle packages version yet. Feel free to modify it to achieve this or wathever else you want it to do.
+Being only a beta version, Aurer does not handle dependencies version yet. Feel free to modify it to achieve this or wathever else you want it to do.
