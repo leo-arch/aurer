@@ -23,13 +23,13 @@ is aimed to do.
 
 ## Options:
 
-**-Ss** [string]     Search for a package in the AUR. ´string´ is either the package name or a keyword describing the package. E.g.           ´aurer -Ss "terminal emulator"´
+**-Ss** [string]     Search for a package in the AUR. `string` is either the package name or a keyword describing the package. E.g.           `aurer -Ss "terminal emulator"`
 
 **-Ssi** [string]    Display those packages in the AUR exactly matching ´string´
 
-**-Sw** [pkg_name]   Download ´pkg_name´ but do not install it
+**-Sw** [pkg_name]   Download `pkg_name` but do not install it
 
-**-S** [pkg_name]    Download, build and install ´pkg_name´
+**-S** [pkg_name]    Download, build and install `pkg_name}`
 
 **-u**               Check installed AUR packages for updates
 
