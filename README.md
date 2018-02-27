@@ -25,7 +25,7 @@ is aimed to do.
 
 **-Ss** [string]     Search for a package in the AUR. `string` is either the package name or a keyword describing the package. E.g.           `aurer -Ss "terminal emulator"`
 
-**-Ssi** [string]    Display those packages in the AUR exactly matching ´string´
+**-Ssi** [string]    Display those packages in the AUR exactly matching `string`
 
 **-Sw** [pkg_name]   Download `pkg_name` but do not install it
 
