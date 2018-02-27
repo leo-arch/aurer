@@ -20,10 +20,11 @@ is aimed to do.
 First of all, Aurer depends on `package-query` to query the AUR for available packages. To install `package-query` follow these steps:
 
 1. Add this lines at the end of you `/etc/pacman.conf`:
-
-`[archlinuxfr]
+```
+[archlinuxfr]
 SigLevel = Never
-Server = http://repo.archlinux.fr/$arch`
+Server = http://repo.archlinux.fr/$arch
+```
 
 2. Update `pacman` database:
 
