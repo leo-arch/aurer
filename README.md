@@ -34,7 +34,7 @@ Server = http://repo.archlinux.fr/$arch
 
 `# pacman -S package-query`
 
-NOTE: Once `package-query` is installed, you may remove [archlinuxfr] by simply removing or commenting the corresponding lines in `/etc/pacman.conf`
+NOTE: Once `package-query` is installed, you may remove [archlinuxfr] by simply deleting or commenting the corresponding lines in `/etc/pacman.conf`
 
 Now, you can donwload and install Aurer:
 
