@@ -19,7 +19,7 @@ is aimed to do.
 
 First of all, Aurer depends on `package-query` to query the AUR for available packages. To install `package-query` follow these steps:
 
-1. Add this lines at the end of you `/etc/pacman.conf`:
+1. Add these lines at the end of you `/etc/pacman.conf`:
 ```
 [archlinuxfr]
 SigLevel = Never
