@@ -21,7 +21,7 @@ is aimed to do.
        $ cd aurer
        $ ./aurer.sh
 
-## Options
+## Options:
 
 **-Ss** [string]     Search for a package in the AUR. "string" is either the package name or a keyword describing the package. E.g.           aurer -Ss 'terminal emulator'
 
