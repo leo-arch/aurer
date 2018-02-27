@@ -29,7 +29,7 @@ is aimed to do.
 
 **-Sw** [pkg_name]   Download `pkg_name` but do not install it
 
-**-S** [pkg_name]    Download, build and install `pkg_name}`
+**-S** [pkg_name]    Download, build and install `pkg_name`
 
 **-u**               Check installed AUR packages for updates
 
