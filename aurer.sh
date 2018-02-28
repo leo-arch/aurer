@@ -113,7 +113,7 @@ function handle_deps ()
 		if [[ ${!var_name} == "found" ]]; then
 			sudo pacman -S ${MAKEDEPENDS[$i]}
 			INSTALLED_MAKEDEPS[${#INSTALLED_MAKEDEPS[@]}]=${MAKEDEPENDS[$i]}
-		elif [[ ${!var_name} == "found" ]]; then
+		elif [[ ${!var_name} == "aur" ]]; then
 			install_aur_pkg ${MAKEDEPENDS[$i]}
 			INSTALLED_MAKEDEPS[${#INSTALLED_MAKEDEPS[@]}]=${MAKEDEPENDS[$i]}
 		fi
