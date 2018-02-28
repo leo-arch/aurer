@@ -1,23 +1,23 @@
 # Aurer
 > A simple, KISS AUR helper written in Bash
 
-Aurer (AUR helpER) is mainly intended to help the user to learn and understand how an AUR package is installed, showing all the 4 basic steps involved in this process: 
-* Tarball download
-* Tarball decompression
-* Package build and installation
+Aurer (AUR helpER) is mainly intended to help the user to learn and understand how an AUR package is installed, showing all the 3 basic steps involved in this process: 
+* Tarball download (via `curl`)
+* Tarball decompression (via `tar`)
+* Package build and installation (via `makepkg`)
 
 Besides AUR packages installation, Aurer also inlcudes the following functions:
 
+* Edition "on the fly" of PKGBUILD and .install files
 * Dependencies handling
 * Search packages in the AUR
 * Check available updates for installed AUR packages 
 
-With less than 200 lines of code, and being only one source file, it may be easily modified and customized by the user. "I give you only a minimal program. Learn about it and make it your own"; this is the motto of the KISS principle, and this is what this script
-is aimed to do.
+With less than 200 lines of code, and being only one source file, it may be easily modified and customized by the user. "I give you only a minimal program. Learn about it and make it your own"; this is the motto of the KISS principle, and this is what this script is aimed to do.
 
 ## Installing Aurer:
 
-First of all, Aurer depends on `package-query` to query the AUR for available packages. To install `package-query` follow these steps:
+First of all, Aurer depends, just as Yaourt, on `package-query` to query the AUR for available packages. To install `package-query` follow these steps:
 
 1. Add these lines at the end of you `/etc/pacman.conf`:
 ```
@@ -34,7 +34,7 @@ Server = http://repo.archlinux.fr/$arch
 
 `# pacman -S package-query`
 
-NOTE: Once `package-query` is installed, you may remove [archlinuxfr] by simply deleting or commenting the corresponding lines in `/etc/pacman.conf`
+NOTE: Once `package-query` is installed, you may remove `[archlinuxfr]` by simply deleting or commenting the corresponding lines in `/etc/pacman.conf`
 
 Now, you can donwload and install Aurer:
 
