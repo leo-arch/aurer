@@ -1,7 +1,7 @@
 # Aurer
 > A simple, KISS AUR helper written in Bash
 
-Aurer (AUR helpER) is, just as any other AUR helper out there, mainly intended automate all the 3 basic steps involved in the process of installing a package from the AUR: 
+Aurer (AUR helpER) is, just as any other AUR helper out there, mainly intended to automate all the 3 basic steps involved in the process of installing a package from the AUR: 
 * Tarball download (via `curl` or `wget`)
 * Tarball decompression (via `tar`)
 * Package build and installation (via `makepkg`)
@@ -9,9 +9,9 @@ Aurer (AUR helpER) is, just as any other AUR helper out there, mainly intended a
 Besides AUR packages installation, Aurer also inlcudes the following features:
 
 * Edition "on the fly" of PKGBUILD and .install files
-* Dependencies handling
-* Search packages in the AUR
-* Check available updates for installed AUR packages 
+* Dependencies resolution
+* AUR packages search
+* Update check for installed AUR packages 
 
 ## Installing Aurer:
 
@@ -25,7 +25,7 @@ Besides AUR packages installation, Aurer also inlcudes the following features:
        $ ./aurer.sh
 
 ###NOTE: Aurer depends either on `cower` or on `package-query` to query the AUR. If none of them is installed, Aurer will ask you
-which one do you want to use and will then install it.
+which one you want to use and will then automatically install it.
 
 ## Options:
 
@@ -33,7 +33,7 @@ which one do you want to use and will then install it.
 
 **-h**               Show this help and exit
 
-**-R** [pkg_name]              Remove `pkg_name`
+**-R** [pkg_name]    Remove `pkg_name`
 
 **-Ss** [string]     Search for a package in the AUR. `string` could be either the package name or a keyword describing the package. E.g.           `aurer -Ss "terminal emulator"`
 
