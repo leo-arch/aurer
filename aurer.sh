@@ -504,7 +504,7 @@ function install_aur_pkg ()
 ! [[ $(command -v pacman) ]] && echo -e "${red}Error:$nc Pacman not found. Aurer can run only \
 on Arch Linux or on an Arch-based Linux distribution" && exit $EXIT_FAILURE
 
-[[ ! $(command -v cowers) && ! $(command -v package-query) ]] && echo -e "${red}Error:$nc \
+[[ ! $(command -v cower) && ! $(command -v package-query) ]] && echo -e "${red}Error:$nc \
 Either ${white}cower$nc or ${white}package-query$nc is required by $prog_name" && \
 																install_aur_agent $@
 
