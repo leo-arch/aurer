@@ -13,7 +13,7 @@ Besides AUR packages installation, Aurer also inlcudes the following features:
 * Edition "on the fly" of PKGBUILD and .install files
 * Dependencies resolution
 * AUR packages search
-* Update check for installed AUR packages 
+* Updates check for installed AUR packages 
 
 ## Installing Aurer:
 
