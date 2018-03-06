@@ -24,8 +24,8 @@ Besides AUR packages installation, Aurer also inlcudes the following features:
        $ cd aurer
        $ ./aurer.sh
 
-###NOTE: Aurer depends either on `cower` or on `package-query` to query the AUR. If none of them is installed, Aurer will ask you
-which one you want to use and will then automatically install it.
+### NOTE: 
+Aurer depends either on `cower` or on `package-query` to query the AUR. If none of them is installed, Aurer will ask you which one you want to use and will then automatically install it.
 
 ## Options:
 
@@ -47,3 +47,4 @@ which one you want to use and will then automatically install it.
 
 **-v**               Show program version and exit
 
+Configuration file: `$HOME/.config/aurer/.aurerrc`
