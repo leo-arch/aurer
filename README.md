@@ -1,6 +1,8 @@
 # Aurer
 > A simple, KISS AUR helper written in Bash
 
+![alt_tag](https://github.com/leo-arch/aurer/blob/master/aurer.png)
+
 Aurer (AUR helpER) is, just as any other AUR helper out there, mainly intended to automate all the 3 basic steps involved in the process of installing a package from the AUR: 
 * Tarball download (via `curl` or `wget`)
 * Tarball decompression (via `tar`)
