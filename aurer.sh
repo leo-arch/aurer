@@ -599,6 +599,8 @@ case $OPTION in
 	-u|--updates)
 		[[ $cower_ok -ne 1 ]] && package-query -Au || cower -u --color=always ;;
 
+	-v|--version) echo -e "$prog_name $version ($date)\nCopyright (C) 2018 $authorLincese GPL2 or later\nThis is free software: you are free to change and redistribute it.There is NO WARRANTY, to the extent permitted by law." ;;
+
 	*)
 		echo -e "${red}Error:$nc Invalid option -- '$(echo $OPTION | sed 's/-//g')'
 Try 'aurer -h' for help"
