@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 ###PROGRAM DESCRIPTION###
 # Aurer: A simple, KISS AUR helper written in Bash.
