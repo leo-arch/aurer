@@ -1,0 +1,1191 @@
+#!/usr/bin/env bash
+
+###PROGRAM DESCRIPTION###
+# Aurer: A simple, KISS AUR helper written in Bash.
+#Copyright: L. M. Abramovich (leonardoabramovich at hotmail.com)
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation; either version 2 of the License, or
+#  (at your option) any later version.
+#  
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#  
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+#  MA 02110-1301, USA.
+#  
+
+#version notice: 
+#	0.4.8: Cower (deprecated) replaced by auracle as second AUR agent
+#	0.4.9: Added git clone as default download method
+#	0.4.10: Added the -D option to check for package dependencies. Redirected all
+#+error messages to stderr.
+#	0.4.11: PKGBUILD parsing replaced by PKGBUILD sourcing.
+#	0.5.0: Fixed AUR agent installation method. Added support for check
+#+dependencies. 
+#	0.5.1: PKGBUILD filtering to prevent malicious code execution (FIX!!)
+#+     secured_PKGBUILD fails: try installing inxi: it fails with optdepends
+#	0.5.2: Improved/secured config file parsing
+#	0.5.2-1: Fixed bug in version function. Fixed ternary operation issue
+#	0.5.2-2: Some code improvements.
+#	0.5.2-3: Added check deps version check
+#	0.5.3: Now uses .SRCINFO files (makepkg --printsrcinfo) instead of PKGBUILD's
+#	0.5.3-2: Fixed lil bug when looking for short named deps like 'st' via auracle.
+
+#TODO list: 
+
+#(DONE)
+# DO NOT use "ternary operators", it's buggy: in "cond && op1 || op2", op2 will 
+#+be executed, even if cond was true, whenever op1 fails (non-zero exit status).
+#+Example: [[ 1 -eq 1 ]] && ls non_existent_file || echo Here
+#+Output:
+#+ls: cannot access 'non_existent_file': No such file or directory
+#+Here
+#+See: https://code.i-harness.com/en/q/3c53ed
+
+#(DONE)
+#When using this construct: "cond && op1 && op2", meaning, do op1 AND op2 if cond
+#+is true, op2 won't happen if op1 fails. Write this instead: "cond && { op1; op2; }"
+#+This construct is known as grouped commands, similar to "(op1; op2)", but with a 
+#+subtle difference: the parentheses form will create a subshell to execute 
+#+commands in the parenthesis (so that "variable assignments do not remain in 
+#+effect after the subshell completes"), whereas the curly braces form do not 
+#+create any subshell. See: https://www.gnu.org/software/bash/manual/html_node/Command-Grouping.html
+
+#(DONE)
+# Do not give the user the chance to choose a download command, it's dangerous. 
+#+Or, simply limit commands to choose to what you know is safe and needed, in
+#+my case, wget and curl. Whichever command is not on of these, will be ignored. 
+
+#(DONE)
+#About install files: there must be just one, named pkgname.install, and its name
+#+must be provided by the PKGBUILD itself (install="pkgname.install")
+
+#(DONE)
+# Use local variables when needed
+
+#(DONE)
+# Check handle_version function when installing the AUR agent: skip check if no AUR
+#+agent
+
+#(DONE)
+# Make sure no code will be executed when sourcing PKGBUILD's. Try 
+#+ makepkg --printsrcinfo > .SRCINFO
+
+#In SPLIT PACKAGES $pkgname is not a variable but an array with the names of 
+#+every resulting binary packages. The name of the package itself is stored in 
+#+the variable $pkgbase. Take a look at llvm-svn (AUR): 9 pkgs, each with its
+#+own deps. See also 'riot', 'open3d'. Makedeps in pkgbase section.
+#+ See: https://jlk.fjfi.cvut.cz/arch/manpages/man/PKGBUILD.5#PACKAGE_SPLITTING
+
+# It seems tsort has something to do with dependency resolution. Take a look at
+#+ it.
+
+# Get rid of eval. Recall: there must be a variable for cmd and a separate array 
+#+for cmd options, like this: "$cmd" "${options[@]}". Of course, you can also 
+#+specify cmd options by hand: "$cmd" -a -b -c. DO NOT store all variables into
+#+one big variable, say, "$cmd_opts". It won't work.
+
+#Take a look at https://google.github.io/styleguide/shell.xml and 
+#+follow the style guidelines provided there.
+
+# Do not use uppercase names for non-fixed variables. Ex: DEPS_NEED_INSTALL
+
+
+#CLEAN ALL NEEDED VARIABLES
+unset white red green cyan magenta nc prog_name version date author CONFIG_DIR CONFIG_FILE \
+TEMP_DIR dep_ver_req down_dep_ver condition pkg ver pkg_name comp_op down_ver \
+not_found file depends makedepends not_sat_req ver_req ret DEPS_NEED_INSTALL_AUR \
+MAKEDEPS_NEED_INSTALL MAKEDEPS_REMOVE MAKEDEPS_NEED_INSTALL_AUR non_inst_deps_aur \
+INSTALLED_MAKEDEPS PKG_NAME CWD_BK answer editor auracle_ok DEFAULT_AUR_URL \
+DEFAULT_DOWNLOAD_CMD COMP_FILE_EXT DEFAULT_GIT_URL git_url down_method \
+DEFAULT_TEMP_DIR DEFAULT_AUR_AGENT AUR_AGENT_INSTALLATION_FLAG checkdepends \
+install pkgver pkgdesc license pkgname url arch provides replaces conflicts
+
+###COLORS###
+blue="\033[1;34m"
+green="\033[1;32m"
+magenta="\033[1;35m"
+nc="\033[0m"
+red="\033[1;31m"
+white="\033[0m\e[1m"
+yellow="\033[1;33m"
+
+###PROGRAM DATA###
+author="L. M. Abramovich"
+date="Jan, 2019"
+prog_name="aurer"
+me=$(basename "$0") #This is the name of the FILE containing the program
+version="0.5.3-2"
+CONFIG_DIR="$HOME/.config/aurer"
+CONFIG_FILE=".aurerrc"
+COMP_FILE_EXT="tar.gz"
+#NOTE: Whereas auracle is installed in only 2% of Arch systems, package-query is
+#+installed in 45% of them. 
+#See https://pkgstats.archlinux.de/package
+DEFAULT_AUR_AGENT="auracle"
+DEFAULT_AUR_URL="https://aur.archlinux.org/cgit/aur.git/snapshot"
+DEFAULT_GIT_URL="https://aur.archlinux.org"
+#NOTE: 86% of Arch systems has wget installed, while 98% has curl
+DEFAULT_DOWNLOAD_CMD="curl -O"
+DEFAULT_TEMP_DIR="/tmp/aurer"
+AUR_AGENT_INSTALLATION_FLAG="$DEFAULT_TEMP_DIR/.agent"
+CWD_BK=$(pwd)
+
+###EXIT CODES###
+EXIT_FAILURE=1
+EXIT_SUCCESS=0
+
+###FUNCTIONS####
+
+function show_version ()
+{
+echo "
+	##############################
+	#     _  _   _ ___           #
+	#    /_\| | | | _ \___ _ _   #
+	#   / _ \ |_| |   / -_) '_|  #
+	#  /_/ \_\___/|_|_\___|_|    #
+	##############################
+"
+echo -e "$prog_name v$version\nCopyright (C) 2018 $author
+License: GPL version 2 or later"
+}
+
+function pkgbuild_edit_msg ()
+{
+	echo -e "
+	${yellow}##########################################################
+	#$white   It's strongly recommnded to check the contents of    ${yellow}#
+	#$white   PKGBUILD and install files. YOU are entirely         ${yellow}# 
+	#$white   responsible for any harm these files may cause.      ${yellow}#
+	##########################################################$nc
+	"
+}
+
+function clean_exit ()
+{
+	echo ""
+	[[ -n $1 ]] && PKG=$1
+	[[ -n $PKG ]] && clean "$PKG"
+	remove_deps
+	remove_make_deps
+	[[ -f "$AUR_AGENT_INSTALLATION_FLAG" ]] && /usr/bin/rm "$AUR_AGENT_INSTALLATION_FLAG"
+	exit $EXIT_FAILURE
+}
+
+function echoerr ()
+{
+	echo -e "$@" >&2
+}
+
+function help ()
+{
+	echo -e "Aurer $version ($date), by $author
+A simple, KISS AUR helper written in Bash. \n
+Usage: aurer [options] [pkg_name]\nOptions:\n
+  -a, --aur-agent\n\tShow currently used AUR agent
+  -D, --check-deps [pkg_name]\n\tCheck pkg_name dependencies
+  -e, --edit\n\tEdit Aurer configuration file
+  -h, --help\n\tShow this help and exit
+  -R, --remove\n\tRemove package
+  -S, --sync [pkg_name]\n\tInstall 'pkg_name' from the AUR
+  -Si, --info [pkg_name]\n\tShow info for 'pkg_name'
+  -Sn, --search-name [string]\n\tShow those packages in the AUR exactly matching 'string'
+  -Ss, --search [string]\n\tSearch a package in the AUR. 'string' is either the \
+package name or a keyword describing the package. E.g. aurer -Ss terminal emulator
+  -St, --sync-traditional [pkg_name]\n\tForce aurer to download a tarball instead of using \
+git clone
+  -Sw, --download-only [pkg_name]\n\tDownload 'pkg_name' but do not install it
+  -u, --updates\n\tCheck updates for installed AUR packages
+  -v, --version\n\tShow program version and exit\n
+Configuration file: \$HOME/.config/aurer/.aurerrc"
+}
+
+###DEPS VERSION FUNCTIONS
+function get_ver ()
+{
+	if [[ $1 == *"="* ]]; then echo "$1" | cut -d"=" -f2
+	elif [[ $1 == *">"* ]]; then echo "$1" | cut -d">" -f2
+	elif [[ $1 == *"<"* ]]; then echo "$1" | cut -d"<" -f2
+	else echo 0
+	fi
+}
+
+function get_pkg_name ()
+{
+	if [[ $1 == *">"* ]]; then echo "$1" | cut -d">" -f1
+	elif [[ $1 == *"<"* ]]; then echo "$1" | cut -d"<" -f1
+	elif [[ $1 == *"="* ]]; then echo "$1" | cut -d"=" -f1
+	fi
+}
+
+function comp_vers ()
+{
+	#Returns 0 if condition is not satisfied, 1 otherwise
+	local dep_ver_req=$1
+	local down_dep_ver=$2
+	local condition=$3
+	
+	local ret=$(vercmp "$down_dep_ver" "$dep_ver_req")
+	case $condition in
+		">=") if [[ $ret -ge 0 ]]; then echo 1; else echo 0; fi ;;
+		"<=") if [[ $ret -le 0 ]]; then echo 1; else echo 0; fi ;;
+		"=") if [[ $ret -eq 0 ]]; then echo 1; else echo 0; fi ;;
+		">") if [[ $ret -gt 0 ]]; then echo 1; else echo 0; fi ;;
+		"<") if [[ $ret -lt 0 ]]; then echo 1; else echo 0; fi ;;
+	esac
+}
+
+function handle_version ()
+{
+	# Returns: 
+	# 0 - Dependency version cannot be satisfied
+	# 1 - No version requirement
+	# 2 - Dep satisfied and installed
+	# 3 - Dep satisfied, but must be installed from Arch repos 
+	# 4 - Dep satisfied, but must be installed from the AUR
+	# 5 - Dep check skipped, no AUR agent installed
+	local pkg=$1
+	local ver=$(get_ver "$pkg") 
+	if [[ $ver != 0 ]]; then 
+		local pkg_name=$(get_pkg_name "$pkg")
+		local comp_op=$(echo "$pkg" | sed -e "s/^$pkg_name//" -e "s/$ver$//")
+		#Check installed packages
+		local down_ver="$(pacman -Q | grep "^${pkg_name} " | awk '{print $2}')"
+		if [[ $down_ver != "" ]]; then 
+			local ret=$(comp_vers "$ver" "$down_ver" "$comp_op")
+			[[ $ret -eq 1 ]] && { echo "2"; return; }
+		fi
+		#Check Arch repos
+		local down_ver=$(/usr/bin/pacman -Ss ^"${pkg_name}"$ | sed -n 1p | awk '{print $2}')
+		if [[ $down_ver != "" ]]; then
+			local ret=$(comp_vers "$ver" "$down_ver" "$comp_op")
+			[[ $ret -eq 1 ]] && { echo "3"; return; }
+		fi
+		#Check the AUR
+		[[ -f $AUR_AGENT_INSTALLATION_FLAG ]] && { echo "5"; return; }
+		if [[ $auracle_ok -eq 1 ]]; then
+			down_ver=$(auracle --color=never search ^"$pkg_name"$ | sed -n 1p | awk '{print $2}')
+		else
+			down_ver=$(package-query -A "$pkg_name" | awk '{print $2}')
+		fi
+		if [[ $down_ver != "" ]]; then
+			local ret=$(comp_vers "$ver" "$down_ver" "$comp_op")
+			[[ $ret -eq 1 ]] && { echo "4"; return; }
+		fi
+		echo "0" #dep version cannot be satisfied
+	else
+		echo "1" #no dep requirement
+	fi
+}
+
+function handle_aur_deps ()
+{
+	#depends and makedepends arrays are taken from the PKGBUILD itself, already
+	#+sourced by the install_aur_pkg function
+	###Take checkdepends into account!!! Only if the check() function is present
+	#+in the PKGBUILD############
+
+	###CHECK DEPS VERSION REQUIREMENTS###
+	echo -e "  ${blue}-> ${white}Dependencies version check: $nc"
+	local not_sat_ver=0; local ver_req=0; local ret=0
+	for (( i=0;i<${#depends[@]};i++ )); do
+		ret=$(handle_version "${depends[$i]}")
+		[[ $ret -eq 0 ]] && { echo -e "  ${depends[$i]}: ${red}Cannot satisfy dependency version$nc"; not_sat_ver=$((not_sat_ver+1)); continue; }
+		[[ $ret -eq 2 ]] && { echo -e "  ${depends[$i]}: ${green}OK$nc"; depends[$i]=$(get_pkg_name "${depends[$i]}"); ver_req=$((ver_req+1)); continue; }
+		[[ $ret -eq 3 || $ret -eq 4 ]] && { echo -e "  ${depends[$i]}: ${green}OK$nc"; depends[$i]=$(get_pkg_name "${depends[$i]}"); ver_req=$((ver_req+1)); continue; }
+		[[ $ret -eq 5 ]] && { echo -e "  ${depends[$i]}: ${red}Version check skipped (no AUR agent)$nc"; depends[$i]=$(get_pkg_name "${depends[$i]}"); continue; }
+	done
+
+	for (( i=0;i<${#makedepends[@]};i++ )); do
+		ret=$(handle_version "${makedepends[$i]}")
+		[[ $ret -eq 0 ]] && { echo -e "  ${makedepends[$i]}: ${red}Cannot satisfy dependency version$nc"; not_sat_ver=$((not_sat_ver+1)); continue; }
+		[[ $ret -eq 2 ]] && { echo -e "  ${makedepends[$i]}: ${green}OK$nc"; makedepends[$i]=$(get_pkg_name "${makedepends[$i]}"); ver_req=$((ver_req+1)); continue; }
+		[[ $ret -eq 3 || $ret -eq 4 ]] && { echo -e "  ${makedepends[$i]}: ${green}OK$nc"; makedepends[$i]=$(get_pkg_name "${makedepends[$i]}"); ver_req=$((ver_req+1)); continue; }
+		[[ $ret -eq 5 ]] && { echo -e "  ${makedepends[$i]}: ${red}Version check skipped (no AUR agent)$nc"; makedepends[$i]=$(get_pkg_name "${makedepends[$i]}"); continue; }
+	done
+
+	for (( i=0;i<${#checkdepends[@]};i++ )); do
+		ret=$(handle_version "${checkdepends[$i]}")
+		[[ $ret -eq 0 ]] && { echo -e "  ${checkdepends[$i]}: ${red}Cannot satisfy dependency version$nc"; not_sat_ver=$((not_sat_ver+1)); continue; }
+		[[ $ret -eq 2 ]] && { echo -e "  ${checkdepends[$i]}: ${green}OK$nc"; checkdepends[$i]=$(get_pkg_name "${checkdepends[$i]}"); ver_req=$((ver_req+1)); continue; }
+		[[ $ret -eq 3 || $ret -eq 4 ]] && { echo -e "  ${checkdepends[$i]}: ${green}OK$nc"; checkdepends[$i]=$(get_pkg_name "${checkdepends[$i]}"); ver_req=$((ver_req+1)); continue; }
+		[[ $ret -eq 5 ]] && { echo -e "  ${checkdepends[$i]}: ${red}Version check skipped (no AUR agent)$nc"; checkdepends[$i]=$(get_pkg_name "${checkdepends[$i]}"); continue; }
+	done
+	
+	[[ $not_sat_ver -gt 0 ]] && return 1
+	[[ $ver_req -eq 0 ]] && echo "  No version requirements"
+	
+	###CHECK DEPS AVAILABILITY###
+	# It's necesssary to distinguish between the following kinds of deps: 1) non-AUR deps, 
+	#+ 2) AUR deps, 3) non-AUR make deps, and 4) AUR make deps. 
+	#+ 1 and 3 are installed as usual via pacman, while 2 and 4 via my custom function "install_aur_pkg"
+	#+ 3 and 4, only necessary during package compilation, will be removed after package 
+	#+ installation, whereas 1 and 2 won't.
+	local non_inst_deps_aur=0; local not_found=0 #flags
+	echo -e "  ${blue}-> ${white}Dependencies availability check: $nc"
+	
+	#CHECK FOR DEPENDENCIES
+	for (( i=0;i<${#depends[@]};i++ )); do 
+		echo -n "  ${depends[$i]} " 
+		if [[ $(/usr/bin/pacman -Qq "${depends[$i]}" 2>/dev/null) ]]; then
+			echo -e "${white}(installed)$nc"
+		elif [[ $(/usr/bin/pacman -Ss "^${depends[$i]}$" 2>/dev/null) ]]; then
+			echo -e "${green}(found)$nc"
+			DEPS_NEED_INSTALL[${#DEPS_NEED_INSTALL[@]}]=${depends[$i]}
+		else
+			if [[ $(command -v /usr/bin/auracle) || $(command -v /usr/bin/package-query) ]]; then
+				local cmd=""
+				if [[ $auracle_ok -eq 1 ]]; then 
+					cmd="auracle --color=never search --searchby=name ^${depends[$i]}$"
+				else
+					cmd="package-query -A --nocolor ${depends[$i]}"
+				fi
+				if [[ $(eval "$cmd" 2>/dev/null) ]]; then
+					echo -e "${magenta}(AUR)$nc"
+					DEPS_NEED_INSTALL_AUR[${#DEPS_NEED_INSTALL_AUR[@]}]=${depends[$i]}
+					non_inst_deps_aur=$((non_inst_deps_aur+1))
+				else
+					echo -e "${red}(not found)$nc"
+					not_found=$((not_found+1))
+				fi
+			else #if no AUR agent (if installing AUR agent)
+				echo -e "${magenta}(AUR?)$nc"
+				DEPS_NEED_INSTALL_AUR[${#DEPS_NEED_INSTALL_AUR[@]}]=${depends[$i]}
+				non_inst_deps_aur=$((non_inst_deps_aur+1))
+			fi
+		fi
+	done
+	
+	#CHECK FOR MAKEDEPENDENCIES
+	for (( i=0;i<${#makedepends[@]};i++ )); do
+		echo -n "  ${makedepends[$i]} "
+		if [[ $(/usr/bin/pacman -Qq "${makedepends[$i]}" 2>/dev/null) ]]; then
+			echo -e "${white}(installed)$nc [makedepends]"
+		elif [[ $(/usr/bin/pacman -Ss "^${makedepends[$i]}$" 2>/dev/null) ]]; then
+			echo -e "${green}(found)$nc [makedepends]"
+			MAKEDEPS_NEED_INSTALL[${#MAKEDEPS_NEED_INSTALL[@]}]=${makedepends[$i]}
+		else
+			if [[ $(command -v /usr/bin/auracle) || $(command -v /usr/bin/package-query) ]]; then			
+				local cmd=""
+				if [[ $auracle_ok -eq 1 ]]; then
+					cmd="auracle --color=never search --searchby=name ^${makedepends[$i]}$"
+				else
+					cmd="package-query -A --nocolor ${makedepends[$i]}"
+				fi
+				if [[ $(eval "$cmd" 2>/dev/null) ]]; then
+					echo -e "${magenta}(AUR)$nc [makedepends]"
+					MAKEDEPS_NEED_INSTALL_AUR[${#MAKEDEPS_NEED_INSTALL_AUR[@]}]=${makedepends[$i]}
+					non_inst_deps_aur=$((non_inst_deps_aur+1))
+				else
+					echo -e "${red}(not found)$nc [makedepends]"
+					not_found=$((not_found+1))
+				fi
+			else
+				echo -e "${magenta}(AUR?)$nc [makedepends]"
+				MAKEDEPS_NEED_INSTALL_AUR[${#MAKEDEPS_NEED_INSTALL_AUR[@]}]=${makedepends[$i]}
+				non_inst_deps_aur=$((non_inst_deps_aur+1))
+			fi
+		fi
+	done
+	
+	#CHECK FOR CHECKDEPENDENCIES
+	#Check deps will be treated just as make deps: they will be removed, together
+	#with make deps, after the main package is compiled and installed
+	for (( i=0;i<${#checkdepends[@]};i++ )); do
+		echo -n "  ${checkdepends[$i]} "
+		if [[ $(/usr/bin/pacman -Qq "${checkdepends[$i]}" 2>/dev/null) ]]; then
+			echo -e "${white}(installed)$nc [checkdepends]"
+		elif [[ $(/usr/bin/pacman -Ss "^${checkdepends[$i]}$" 2>/dev/null) ]]; then
+			echo -e "${green}(found)$nc [checkdepends]"
+			MAKEDEPS_NEED_INSTALL[${#MAKEDEPS_NEED_INSTALL[@]}]=${checkdepends[$i]}
+		else
+			if [[ $(command -v /usr/bin/auracle) || $(command -v /usr/bin/package-query) ]]; then
+				local cmd=""
+				if [[ $auracle_ok -eq 1 ]]; then
+					cmd="auracle --color=never search --searchby=name ^${checkdepends[$i]}$"
+				else
+					cmd="package-query -A --nocolor ${checkdepends[$i]}"
+				fi
+				if [[ $(eval "$cmd" 2>/dev/null) ]]; then
+					echo -e "${magenta}(AUR)$nc [checkdepends]"
+					MAKEDEPS_NEED_INSTALL_AUR[${#MAKEDEPS_NEED_INSTALL_AUR[@]}]=${checkdepends[$i]}
+					non_inst_deps_aur=$((non_inst_deps_aur+1))
+				else
+					echo -e "${red}(not found)$nc [checkdepends]"
+					not_found=$((not_found+1))
+				fi
+			else
+				echo -e "${magenta}(AUR?)$nc [checkdepends]"
+				MAKEDEPS_NEED_INSTALL_AUR[${#MAKEDEPS_NEED_INSTALL_AUR[@]}]=${checkdepends[$i]}
+				non_inst_deps_aur=$((non_inst_deps_aur+1))
+			fi
+		fi
+	done
+	
+	###If only checking deps (-D), but not installing (-S)...
+	if [[ $OPTION == "-D" ]]; then
+		clean "$PKG"
+		exit $EXIT_SUCCESS
+	fi
+
+	[[ $not_found -gt 0 ]] && { echoerr "\n${red}Error:$nc Cannot satisfy dependencies"; return 1; }
+
+	###INSTALL NON-AUR DEPS, IF ANY###
+	if [[ ${#DEPS_NEED_INSTALL[@]} -gt 0 ]]; then
+		echo -e "\n${green}==>$nc ${white}Installing dependencies...$nc\n "
+		sudo /usr/bin/pacman -S --asdeps "${DEPS_NEED_INSTALL[@]}"
+		if [[ $? -eq 0 ]]; then
+			INSTALLED_DEPS=( "${DEPS_NEED_INSTALL[@]}" )
+		else
+			clean "$PKG"
+			#Since pacman will install several packages, an error could mean that
+			#SOME pkg installation, and not all of them, failed, so that it is
+			#necessary to check for actually installed packages, if any, and then
+			#remove them via remove_deps
+			INSTALLED_DEPS=( $(pacman -Qq "${DEPS_NEED_INSTALL[@]}" 2>/dev/null) )
+			remove_deps
+			remove_make_deps
+			exit $EXIT_FAILURE
+		fi
+	fi
+
+	###INSTALL NON-AUR MAKE DEPS, IF ANY###
+	if [[ ${#MAKEDEPS_NEED_INSTALL[@]} -gt 0 ]]; then
+		if [[ ${#checkdepends[@]} -gt 0 ]]; then
+			echo -e "\n${green}==>$nc ${white}Installing make and check dependencies...$nc\n "
+		else
+			echo -e "\n${green}==>$nc ${white}Installing make dependencies...$nc\n "
+		fi
+		#There's no need to install them as dependencies, since they will be removed after the main package
+		#+installation (so, no need of "--asdeps")
+		sudo /usr/bin/pacman -S "${MAKEDEPS_NEED_INSTALL[@]}"
+		if [[ $? -eq 0 ]]; then
+#			mapfile -t INSTALLED_MAKEDEPS < <(echo "${MAKEDEPS_NEED_INSTALL[@]}")
+			INSTALLED_MAKEDEPS=( "${MAKEDEPS_NEED_INSTALL[@]}" )
+		else
+			clean "$PKG"
+			INSTALLED_MAKEDEPS=( $(pacman -Qq "${MAKEDEPS_NEED_INSTALL[@]}" 2>/dev/null) )
+			remove_deps
+			remove_make_deps
+			exit $EXIT_FAILURE
+		fi
+	fi
+
+	###ASK THE USER WHETHER SHE WANTS TO INSTALL AUR DEPS###
+	if [[ $non_inst_deps_aur -gt 0 ]]; then
+		echo ""
+		answer="none"
+		while [[ $answer != "" && $answer != "Y" && $answer != "y" && $answer != "N" && $answer != "n" ]]; do
+			read -rp "$(echo -e "${blue}:: ${white}Install AUR dependencies? [Y/n] $nc")" answer
+		done
+		case $answer in
+			""|Y|y) ;;
+			N|n) return 1 ;;
+		esac
+	fi
+	
+	###INSTALL AUR DEPS###
+	if [[ ${#DEPS_NEED_INSTALL_AUR[@]} -gt 0 ]]; then
+		for (( i=0;i<${#DEPS_NEED_INSTALL_AUR[@]};i++ )); do
+			# Call a new instance of aurer to install AUR deps. This prevents aurer from
+			#+ overwritting the data of the original AUR pkg with that of the AUR dep (which
+			#+ happens whenever I call "install_aur_pkg" to install an AUR dep instead of
+			#+ calling a new instance of aurer, with a different memory space).
+			if [[ $0 == "/"* ]]; then
+				$0 -S --asdeps "${DEPS_NEED_INSTALL_AUR[$i]}"
+			else
+				"$DIR"/"$0" -S --asdeps "${DEPS_NEED_INSTALL_AUR[$i]}"
+			fi
+			if [[ $? -eq 0 ]]; then
+				INSTALLED_DEPS_AUR[${#INSTALLED_DEPS_AUR[@]}]=${DEPS_NEED_INSTALL_AUR[$i]}
+			else
+				clean "$PKG"
+				remove_deps
+				remove_make_deps
+				exit $EXIT_FAILURE
+			fi
+		done
+	fi
+
+	###INSTALL AUR MAKEDEPS###
+	if [[ ${#MAKEDEPS_NEED_INSTALL_AUR[@]} -gt 0 ]]; then
+		for (( i=0;i<${#MAKEDEPS_NEED_INSTALL_AUR[@]};i++ )); do
+			if [[ ${INSTALLED_DEPS_AUR[*]} != *"${MAKEDEPS_NEED_INSTALL_AUR[$i]}"* ]]; then
+				if [[ $0 == "/"* ]]; then
+					$0 -S --asdeps "${MAKEDEPS_NEED_INSTALL_AUR[$i]}"
+				else
+					"$DIR"/"$0" -S --asdeps "${MAKEDEPS_NEED_INSTALL_AUR[$i]}"
+				fi
+				if [[ $? -eq 0 ]]; then
+					INSTALLED_MAKEDEPS[${#INSTALLED_MAKEDEPS[@]}]=${MAKEDEPS_NEED_INSTALL_AUR[$i]}
+				else
+					clean "$PKG"
+					remove_deps
+					remove_make_deps
+					exit $EXIT_FAILURE
+				fi
+			fi
+		done
+	fi
+
+	###LIST OPTIONAL DEPS###
+#Optional deps will be listed by pacman itself after installing the package
+#	echo -e "\nOptional dependencies for $PKG:\n"
+#	for (( i=0;i<${#optdepends[@]};i++ )); do
+#		echo "  ${optdepends[$i]}"
+#	done
+#	echo ""
+#	read -rp "Press Enter key to continue... " key
+#	unset key
+
+	return 0
+}
+
+function clean ()
+{
+	#Remove temp files
+	local PKG_NAME=$1
+	cd "$CWD_BK" || exit $EXIT_FAILURE
+	#${PKG_NAME:?} demands that PKG_NAME is not empty; otherwise, if $PKG_NAME
+	#+is empty and $TMP_DIR is, for some reason, '/', rm will attempt to remove 
+	#+the whole filesystem (/).
+	[[ -d "$TEMP_DIR"/"$PKG_NAME" ]] && rm -rf "$TEMP_DIR"/"${PKG_NAME:?}"
+	[[ -f "$TEMP_DIR"/"${PKG_NAME}"."$COMP_FILE_EXT" ]] && rm "$TEMP_DIR"/"${PKG_NAME}"."$COMP_FILE_EXT"
+	[[ -f "$AUR_AGENT_INSTALLATION_FLAG" ]] && /usr/bin/rm "$AUR_AGENT_INSTALLATION_FLAG"
+}
+
+function remove_deps ()
+{
+	if [[ ${#INSTALLED_DEPS[@]} -gt 1 ]]; then
+		echo -e "${green}==> ${white}Removing unneeded dependencies... $nc"
+		sudo /usr/bin/pacman -Rns "${INSTALLED_DEPS[@]}"
+	fi
+	if [[ ${#INSTALLED_DEPS_AUR[@]} -gt 0 ]]; then
+		echo -e "${green}==> ${white}Removing unneeded AUR dependencies... $nc"
+		sudo /usr/bin/pacman -Rns "${INSTALLED_DEPS_AUR[@]}"
+	fi
+}
+
+function remove_make_deps ()
+{
+	#INSTALLED_MAKEDEPS contains both official and AUR pkgs
+	if [[ ${#INSTALLED_MAKEDEPS[@]} -gt 0 ]]; then
+		if [[ ${#checkdepends[@]} -gt 0 ]]; then
+			echo -e "\n${green}==> ${white}Removing unneeded make and check dependencies... $nc"
+		else
+			echo -e "\n${green}==> ${white}Removing unneeded make dependencies... $nc"		
+		fi
+		# Some pkgs, line urxvtconfig, contains the same dep in
+		#+ both "depends" and "makedepends", in which case the make dep, insofar as it is also
+		#+ a dependency of the program itself, should not be removed.
+		for (( i=0;i<${#INSTALLED_MAKEDEPS[@]};i++ )); do
+			if [[ ${INSTALLED_DEPS_AUR[*]} != *"${INSTALLED_MAKEDEPS[$i]}"* ]]; then
+				MAKEDEPS_REMOVE[${#MAKEDEPS_REMOVE[@]}]=${INSTALLED_MAKEDEPS[$i]}
+			fi
+		done
+		if [[ ${#MAKEDEPS_REMOVE[@]} -gt 0 ]]; then
+			sudo /usr/bin/pacman -Rns "${MAKEDEPS_REMOVE[@]}"
+		fi
+	fi
+}
+
+function remove_pkg ()
+{
+	local PKG_NAME=$1
+	if [[ $(/usr/bin/pacman -Qq "$PKG_NAME" 2>/dev/null) ]]; then
+		sudo /usr/bin/pacman -Rns "$PKG_NAME"
+	else
+		echoerr "error: package '$PKG_NAME' was not found"
+		exit $EXIT_FAILURE
+	fi
+}
+
+function install_aur_agent ()
+{
+	#ASK WHICH AUR AGENT TO INSTALL
+	echo -e "\n${yellow}1 ${white}auracle (AUR)\n${yellow}2 ${white}package-query (AUR)$nc\n${yellow}\
+3 ${white}quit$nc\n"
+	local answer="none"
+	while [[ $answer != "1" && $answer != "2" && $answer != "3" ]]; do
+		read -rp "$(echo -e "${blue}:: ${white}Choose an option:$nc ")" answer
+	done
+	case $answer in
+		1) AUR_AGENT="auracle-git" ;;
+		2) AUR_AGENT="package-query" ;;
+		3) exit $EXIT_SUCCESS ;;
+	esac
+	#If the clean_exit function is called, it will look for $PKG, and at this point
+	#+ $PKG could only be, and must be, $AUR_AGENT. If everything goes fine and the
+	#+ AUR agent is successfully installed, the program will go on and $PKG will 
+	#+ take the first non-optio value passed to the program.
+	local PKG_BK=$PKG
+	PKG=$AUR_AGENT
+
+	/usr/bin/touch "$AUR_AGENT_INSTALLATION_FLAG" || exit $EXIT_FAILURE
+	install_aur_pkg "$AUR_AGENT"
+	/usr/bin/rm "$AUR_AGENT_INSTALLATION_FLAG" 2>/dev/null
+	if [[ $AUR_AGENT == "auracle-git" && $(command -v /usr/bin/auracle) ]]; then
+		auracle_ok=1
+	fi
+	PKG=$PKG_BK
+
+	#Clean variables to be used again if necessary
+	unset not_sat_ver ver_req non_inst_deps_aur not_found DEPS_NEED_INSTALL \
+	DEPS_NEED_INSTALL_AUR MAKEDEPS_NEED_INSTALL MAKEDEPS_NEED_INSTALL_AUR \
+	INSTALLED_DEPS INSTALLED_DEPS_AUR INSTALLED_MAKEDEPS
+
+	#RUN ORIGINAL COMMAND
+	answer="none"
+	
+	while [[ $answer != "" && $answer != "Y" && $answer != "y" && $answer != "n" && $answer != "N" ]]; do
+		read -rp "$(echo -e "\n${blue}:: ${white}Run your original command ($me $*)? [Y/n] $nc")" answer
+	done
+	case $answer in
+		""|Y|y) ;;
+		N|n) exit $EXIT_SUCCESS ;;
+	esac
+}
+
+function get_deps ()
+{
+	unset depends makedepends checkdepends install
+	if [[ $1 == "mod" || ! -f .SRCINFO ]]; then
+		makepkg --printsrcinfo > .SRCINFO
+	fi
+	if ! [[ -f .SRCINFO ]]; then
+		echoerr "${red}Error:$nc .SRCINFO file not found"
+		clean "$PKG_NAME"
+		exit $EXIT_FAILURE
+	fi
+	depends=( $(grep -P "\tdepends = " .SRCINFO | cut -d"=" -f2) )
+	makedepends=( $(grep -P "\tmakedepends = " .SRCINFO | cut -d"=" -f2) )
+	checkdepends=( $(grep -P "\tcheckdepends = " .SRCINFO | cut -d"=" -f2) )
+	install=$(grep -P "\tinstall = " .SRCINFO | cut -d"=" -f2 | tr -d ' ')
+}
+
+function handle_split_pkgs ()
+{
+	local pkgname=( $(grep "pkgname = " .SRCINFO | cut -d"=" -f2) )
+	if [[ ${#pkgname[@]} -gt 1 ]]; then
+		echoerr "Sorry, split packages not yet suppported (we're working on it though)\n"
+		clean "$PKG_NAME"
+		exit $EXIT_FAILURE
+		
+		#Separate official from AUR pkgs (in pkgname array)
+		for (( i=0;i<${#pkgname[@]};i++ )); do
+			if [[ $(/usr/bin/pacman -Ss "^${pkgname[$i]}$") ]]; then
+				OFFICIAL[${#OFFICIAL[@]}]=${pkgname[$i]}
+			else
+				if [[ $auracle_ok -eq 1 ]]; then
+					cmd="auracle --color=never search ^${pkgname[$i]}$"
+				else
+					cmd="package-query -A --nocolor ${pkgname[$i]}"
+				fi
+				if [[ $(eval "$cmd" 2>/dev/null) ]]; then					
+					AUR[${#AUR[@]}]=${pkgname[$i]}
+				else
+					echoerr "${red}Error: ${pkgname}: Target not found"
+					clear "$PKG_NAME"
+					exit $EXIT_FAILURE
+				fi
+			fi	
+		done
+
+		#Install official pkgs
+		echo "/usr/bin/pacman -S "${OFFICIAL[@]}""
+
+		#Install AUR pkgs
+		for (( i=0;i<${#AUR[@]};i++ )); do
+			if [[ $0 == "/"* ]]; then
+				echo ""$0" -S "${AUR[$i]}""
+			else
+				echo ""$DIR"/"$0" -S "${AUR[$i]}""
+			fi
+			if [[ $? -ne 0 ]]; then
+				clean "$PKG_NAME"
+				exit $EXIT_FAILURE
+			fi			
+		done
+		
+		#Get global (pkgbase) deps
+		#Store only global data (pkgbase section) in a new temp file
+		sed '"/pkgname = /Q"' .SRCINFO > .SRCINFO_global
+		if ! [[ -f .SRCINFO_global ]]; then
+			echoerr "${red}Error:$nc Failed reading .SRCINFO file"
+			clear "$PKG_NAME"
+			exit $EXIT_FAILURE
+		fi
+		#The new temp file is now .SRCINFO
+		/usr/bin/mv .SRCINFO .SRCINFO_bk
+		/usr/bin/mv .SRCINFO_global .SRCINFO
+		/usr/bin/rm .SRCINFO_global
+
+		depends=( $(grep -P "\tdepends = " .SRCINFO | cut -d"=" -f2) )
+		makedepends=( $(grep -P "\tmakedepends = " .SRCINFO | cut -d"=" -f2) )
+		checkdepends=( $(grep -P "\tcheckdepends = " .SRCINFO | cut -d"=" -f2) )
+		install=$(grep -P "\tinstall = " .SRCINFO | cut -d"=" -f2 | tr -d ' ')
+		echo "Global: "
+		echo "depends: ${depends[@]}"
+		echo "makedepends: ${makedepends[@]}"		
+		echo "checkdepends: ${checkdepends[@]}"
+		echo "install: $install"
+		exit 0
+	fi
+}
+
+function install_aur_pkg ()
+{
+	local PKG_NAME=$1
+	download_pkg "$PKG_NAME"
+	
+	cd "$PKG_NAME" || exit $EXIT_FAILURE
+	
+	#Check whether PKGBUILD exists
+	if ! [[ -f PKGBUILD ]]; then
+		echo -e "${red}Error:$nc 'PKGBUILD' not found"
+		clean "$PKG_NAME"
+	fi
+
+	###SPLIT PACKAGES###
+	handle_split_pkgs
+	
+	#Get deps and install file from .SRCINFO file
+	get_deps
+
+	if [[ $OPTION != "-D" ]]; then
+		pkgbuild_edit_msg
+		#Allow the user to edit the PKGBUILD
+		answer="none"
+		while [[ $answer != "" && $answer != "Y" && $answer != "y" && $answer != "N" && $answer != "n" ]]; do
+			read -rp "$(echo -e "${blue}:: ${white}Edit PKGBUILD? [Y/n]$nc ")" answer
+		done
+		case $answer in
+			""|Y|y)
+				read -rp "$(echo -e "${blue}  -> ${white}Editor: $nc")" editor
+				if [[ -n $editor ]]; then
+					if [[ $(command -v "$editor") ]]; then 
+						"$editor" PKGBUILD
+						get_deps "mod"
+					else
+						if [[ -n $default_editor ]]; then
+							echoerr "$red    error:$nc '$editor' not found, using '${default_editor##*/}' instead..."
+							read -rp "    Press Enter key to continue" key
+							unset key
+							"$default_editor" PKGBUILD
+						else
+							echoerr "No editor found"
+						fi
+						editor=""
+					fi
+				else #if the user just pressed Enter...
+					if [[ -n $default_editor ]]; then
+						editor=$default_editor
+						"$editor" PKGBUILD
+						get_deps "mod"
+					else
+						echoerr "No default editor found"
+					fi
+				fi ;;
+			*) ;;
+		esac
+		
+		#Check whether there is an install script and allow the user to edit it
+		if [[ -n $install ]]; then
+			answer="none"
+			while [[ $answer != "" && $answer != "Y" && $answer != "y" && $answer != "N" && $answer != "n" ]]; do
+				read -rp "$(echo -e "${blue}:: ${white}Edit ${install}? [Y/n]$nc ")" answer
+			done
+			case $answer in
+				""|Y|y) 
+					if [[ -n $editor ]]; then 
+						/usr/bin/"$editor" "$install"
+					else
+						read -rp "$(echo -e "${blue}  -> ${white}Editor: $nc")" editor
+						if [[ -n $editor ]]; then
+							if [[ $(command -v "$editor") ]]; then
+								"$editor" "$install"
+							else
+								if [[ -n $default_editor ]]; then
+									"$default_editor" "$install"
+								else
+									echoerr "No editor found"
+								fi
+								editor=""
+							fi
+						else
+							if [[ -n $default_editor ]]; then
+								editor=$default_editor
+								"$editor" "$install"
+							else
+								echoerr "No default editor found"
+							fi
+						fi
+					fi ;;
+				*) ;;
+			esac
+		fi
+	fi
+
+	#Get some misc information about the package
+	local pkgname=( $(grep "pkgname = " .SRCINFO | cut -d"=" -f2) )
+	if [[ -z ${pkgname[@]} ]]; then
+		pkgname=( $(grep "pkgbase = " .SRCINFO | cut -d"=" -f2) )	
+	fi
+	local pkgdesc=$(grep -P "\tpkgdesc = " .SRCINFO | cut -d"=" -f2)
+	local url=$(grep -P "\turl = " .SRCINFO | cut -d"=" -f2)
+	local pkgver=$(grep -P "\tpkgver = " .SRCINFO | cut -d"=" -f2)
+	local arch=( $(grep -P "\tarch = " .SRCINFO | cut -d"=" -f2) )
+	local license=( $(grep -P "\tlicense = " .SRCINFO | cut -d"=" -f2) )
+	local provides=( $(grep -P "\tprovides = " .SRCINFO | cut -d"=" -f2) )
+	local conflicts=( $(grep -P "\tconflicts = " .SRCINFO | cut -d"=" -f2) )
+	local replaces=( $(grep -P "\treplaces = " .SRCINFO | cut -d"=" -f2) )
+
+	###PRINT PKG INFO###
+	echo -e "${blue}  ->$white Package information:$nc
+  Name: ${pkgname[*]}
+  Description:$pkgdesc
+  Version:$pkgver
+  Architecture: ${arch[*]}
+  URL:$url
+  License: ${license[*]}
+  Provides: ${provides[*]}
+  Conflicts: ${conflicts[*]}
+  Replaces: ${replaces[*]}\n"
+  
+	#HANDLE AUR DEPS###
+	echo -e "${green}==> ${white}Checking dependencies for '${PKG_NAME}'... $nc"
+	handle_aur_deps
+	#If something failed when handling dependencies, or they were not installed, 
+	#+remove the tarball and its decompressed directory from TEMP_FILE
+	if [[ $? -eq 1 ]]; then 
+		clean "$PKG_NAME"
+		remove_deps
+		remove_make_deps
+		exit $EXIT_FAILURE
+	fi
+	
+	##CONFIRM PACKAGE INSTALLATION###
+	answer="none"; echo ""
+	while [[ $answer != "" && $answer != "Y" && $answer != "y" && $answer != "N" && $answer != "n" ]]; do
+		read -rp "$(echo -e "${blue}:: ${white}Build '${PKG_NAME}'? [Y/n]$nc ")" answer
+	done
+	case $answer in
+		""|Y|y) ;;
+		N|n)
+			clean "$PKG_NAME"
+			remove_deps
+			remove_make_deps
+			exit $EXIT_SUCCESS ;;
+	esac
+	
+	#INSTALL PACKAGE
+	echo -e "${green}==> ${white}Building '${PKG_NAME}'... $nc"	
+	#Without square brackets "[]", the output of the condition will be shown
+	if /usr/bin/makepkg -si; then
+		if ! [[ $(pacman -Qq "$PKG_NAME" 2>/dev/null) ]]; then
+			clean_exit "$PKG_NAME"
+		else
+			clean "$PKG_NAME"
+			remove_make_deps
+		fi
+	else
+		clean_exit "$PKG_NAME"
+	fi
+}
+
+function download_pkg ()
+{
+	local PKG_NAME=$1
+	if [[ $(command -v /usr/bin/auracle ) || $(command -v /usr/bin/package-query) ]]; then
+		#CHECK PKG EXISTENCE
+		echo -ne "${green}==> ${white}Checking package existence... $nc"
+		if [[ $auracle_ok -eq 0 ]]; then
+			local cmd="package-query"
+			local cmd_options=( "-A" ) 
+			local package="$PKG_NAME"
+		else 
+			local cmd="auracle"
+			local cmd_options=( "--color=never" "search" "--searchby=name" )
+			local package="^$PKG_NAME$"
+		fi
+		if [[ $("$cmd" "${cmd_options[@]}" "$package" 2>/dev/null) ]]; then	
+			echo -e "${green}OK$nc"
+		else
+			echoerr "${red}error$nc\n'${PKG_NAME}': Target not found"
+			exit $EXIT_FAILURE
+		fi
+	else #If NO AUR agent is installed, no check can be done
+		echo -e "${green}==> ${white}Package existence check skipped$nc"
+	fi	
+
+	#CD INTO TMP DIR
+	cd "$TEMP_DIR" || { clean "$PKG_NAME"; exit $EXIT_FAILURE; }
+
+	#DOWNLOAD THE PKGBUILD
+	if [[ $down_method == "git" && $(command -v /usr/bin/git) ]]; then
+		#GIT CLONE PKG INTO TMP DIR
+		echo -e "${green}==> ${white}Git cloning $PKG_NAME... $nc"
+		git -C "$TEMP_DIR" clone "$git_url"/"$PKG_NAME".git
+		if [[ $? -ne 0 ]]; then
+#		if ! [[ $(git -C "$TEMP_DIR" clone "$git_url"/"$PKG_NAME".git) -eq 0 ]]; then
+			clean "$PKG_NAME"
+			exit $EXIT_FAILURE
+		fi
+	else #Traditional method
+		#DOWNLOAD TARBALL INTO TMP DIR
+		echo -e "${green}==> ${white}Downloading tarball from AUR... $nc"
+		if ! [[ $("$download_cmd" "${download_options[@]}" "$aur_url"/"$PKG_NAME"."$COMP_FILE_EXT") -eq 0 ]]; then
+			echoerr "${red}Error$nc\nCould not retrieve file: ${PKG_NAME}.$COMP_FILE_EXT"
+			clean "$PKG_NAME"
+			exit $EXIT_FAILURE
+		fi
+
+		#DECOMPRESS TARBALL
+		echo -ne "${green}==> ${white}Decompressing tarball... $nc"
+		if ! [[ $(/usr/bin/tar -xvf "$PKG_NAME"."$COMP_FILE_EXT") ]]; then
+			echo -e "${red}error$nc"
+			cd "$CWD_BK" || exit $EXIT_FAILURE
+			exit $EXIT_FAILURE
+		else
+			echo -e "${green}OK$nc"
+			if [[ $OPTION == "-Sw" ]]; then
+				echo "${PKG_NAME}'s PKGBUILD stored in $TEMP_DIR/$PKG_NAME"
+				/usr/bin/rm "$PKG_NAME"."$COMP_FILE_EXT" 2>/dev/null || exit $EXIT_FAILURE
+				cd "$CWD_BK" || exit $EXIT_FAILURE
+			fi
+		fi
+	fi
+}
+
+function aur_agent_check ()
+{
+	#Do not try to install an AUR agent if the AUR agent is currently being installed
+	if ! [[ -f $AUR_AGENT_INSTALLATION_FLAG ]]; then
+		if [[ ! $(command -v /usr/bin/auracle) && ! $(command -v /usr/bin/package-query) ]]; then
+			echoerr "Either ${white}auracle$nc or ${white}package-query$nc is required by $prog_name"
+			install_aur_agent "$@"
+		fi
+	fi
+}
+
+###MAIN####
+
+#Trap kill signals and perform a clean exit
+trap clean_exit SIGINT #Ctrl+c
+trap clean_exit SIGTERM #kill family
+
+# GET AURER CURRENT WORKING DIRECTORY (CWD). 
+#+ This value will be used to recall the script (from within the scripts itself) when 
+#+ installing AUR deps (to avoid overwritting original data: install_aur_pkg -> handle_aur_deps -> 
+#+ install_aur_pkg).
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+
+#CREATE CONFIG FILE
+! [[ -d $CONFIG_DIR ]] && /usr/bin/mkdir -p "$CONFIG_DIR"
+if ! [[ -f "$CONFIG_DIR"/"$CONFIG_FILE" ]]; then
+	echo -e "Aurer Configuration File
+########################
+aur_agent=$DEFAULT_AUR_AGENT
+build_dir=$DEFAULT_TEMP_DIR
+aur_url=$DEFAULT_AUR_URL
+aur_url_git=$DEFAULT_GIT_URL
+download_method=git
+#download_method=traditional
+#download_cmd=$DEFAULT_DOWNLOAD_CMD 
+#download_cmd=wget -q" > "$CONFIG_DIR"/"$CONFIG_FILE"
+fi
+
+[[ $# -eq 0 ]] && { echoerr "$prog_name: Missing operand\nTry 'aurer -h' for help"; exit $EXIT_FAILURE; }
+
+###PARSE CONFIG FILE###
+
+#GET AUR-AGENT
+#At this point, either auracle or package-query is installed. Therefore, if auracle is not defined
+#+in the config file as the aur_agent and/or auracle is not installed, package-query will be the
+#+aur_agent, which is what auracle_ok=0 means.
+if [[ $(grep "^aur_agent=" "$CONFIG_DIR"/"$CONFIG_FILE" | sed -n 1p | cut -d"=" -f2) == "auracle" ]]; then
+	if [[ $(command -v /usr/bin/auracle) ]]; then
+		auracle_ok=1
+	else
+		auracle_ok=0
+	fi
+else
+	auracle_ok=0
+fi
+
+#GET DOWNLOAD METHOD
+down_method=$(grep ^"download_method=" "$CONFIG_DIR"/"$CONFIG_FILE" | sed -n 1p | cut -d"=" -f2)
+if [[ -z $down_method ]]; then 
+	down_method="git"
+#Download method is either git or traditional
+elif [[ $down_method != "git" && $down_method != "traditional" ]]; then
+	down_method="git"
+fi
+
+if [[ $down_method == "git" ]]; then
+	#GET AUR URL FOR GIT
+	git_url=$(grep "^aur_url_git=" "$CONFIG_DIR"/"$CONFIG_FILE" | sed -n 1p | cut -d"=" -f2)
+	if [[ -z $git_url ]]; then
+		git_url=$DEFAULT_GIT_URL
+	fi
+else
+	#GET AUR URL
+	aur_url=$(grep "^aur_url=" "$CONFIG_DIR"/"$CONFIG_FILE" | sed -n 1p | cut -d"=" -f2)
+	[[ -z $aur_url ]] && aur_url=$DEFAULT_AUR_URL
+
+	#GET DOWNLOAD COMMAND AND OPTIONS
+	download_str=$(grep "^download_cmd=" "$CONFIG_DIR"/"$CONFIG_FILE" | sed -n 1p | cut -d"=" -f2)
+	download_cmd=$(echo "$download_str" | cut -d" " -f1)
+	download_options=( $(echo "$download_str" | cut -d" " -f2-10) )
+	unset download_str
+	if [[ $download_cmd == "curl" ]]; then
+		#If no download options...
+		[[ $download_cmd == "${download_options[*]}" ]] && download_options[0]="-O"
+	elif [[ $download_cmd == "wget" ]]; then
+		[[ $download_cmd == "${download_options[*]}" ]] && download_options[0]="--"
+	else #if cmd is neither curl nor wget...
+		download_cmd="curl"
+		download_options[0]="-O"
+	fi
+fi
+
+#GET BUILD/TMP DIR
+TEMP_DIR=$(grep "^build_dir=" "$CONFIG_DIR"/"$CONFIG_FILE" | sed -n 1p | cut -d"=" -f2)
+[[ -z $TEMP_DIR || ! -d $TEMP_DIR ]] && TEMP_DIR=$DEFAULT_TEMP_DIR
+
+#CREATE TMP DIR, IF IT DOESN'T EXIST YET
+[[ $EUID -eq 0 ]] && TEMP_DIR="${TEMP_DIR}_root" #if root, use another tmp path. Otherwise normal
+#+users won't be able to use the temp directory and aurer will fail
+if ! [[ -d $TEMP_DIR ]]; then
+	if ! /usr/bin/mkdir -p "$TEMP_DIR" 2>/dev/null; then
+		echoerr "${red}error:$nc failed creating temporary directory '$TEMP_DIR'"
+		exit $EXIT_FAILURE
+	fi
+fi
+
+#DEFINE DEFAULT EDITOR TO EDIT PKGBUILD'S AND .INSTALL FILES
+if [[ $(command -v /usr/bin/nano) ]]; then
+	#if $EDITOR is NULL or unset, use /usr/bin/nano instead
+	default_editor="${EDITOR:-/usr/bin/nano}" #91% of Arch users
+elif [[ $(command -v /usr/bin/vi) ]]; then
+	default_editor="${EDITOR:-/usr/bin/vi}" #87%
+elif [[ $(command -v /usr/bin/vim) ]]; then
+	default_editor="${EDITOR:-/usr/bin/vim}" #45%
+elif [[ $(command -v /usr/bin/emacs) ]]; then
+	default_editor="${EDITOR:-/usr/bin/emacs}" #19%
+else
+	default_editor="${EDITOR:-""}"
+fi
+
+#CHECK AURER DEPS (pacman && (auracle || package-query))
+! [[ $(command -v /usr/bin/pacman) ]] && { echoerr "${red}Error:$nc Pacman not found. Aurer can run only \
+on Arch Linux or on an Arch-based Linux distribution"; exit $EXIT_FAILURE; }
+
+#GIT is found in the 96% of Arch machines
+! [[ $(command -v /usr/bin/git) ]] && { echoerr "${red}Git$nc (/usr/bin/git) was not \
+found. Bear in mind, however, that it is the ${white}recommended method for \
+downloading PKGBUILD's$nc"; read -rp "Press Enter key to continue... " key; }
+
+#PARSE OPTIONS
+OPTION=$1; shift; PKG="$*"
+#Shift will move all positional parameters one place to the left, so that $@ will be what 
+#+originally was $2, $3, $4, and so on, without $1 (OPTION). 
+while [[ $PKG == "-"* ]]; do
+	shift
+	PKG="$*"
+done
+#Pkg name (PKG) will be the first non-option parameter
+#PACKAGE NAME VALIDATION
+[[ $PKG == "."* ]] && { echoerr "'$PKG': Package names are not allowed to start with hyphens or dots"; exit $EXIT_FAILURE; }
+
+case $OPTION in
+	-a|--aur-agent) 
+		aur_agent_check "$OPTION" "$@"
+		echo -n "AUR agent: "; 
+		if [[ $auracle_ok -eq 1 ]]; then
+			echo -e "${white}auracle$nc"
+		else
+			echo -e "${white}package-query$nc"
+		fi ;;
+
+	-D|--check-deps) 
+		aur_agent_check "$OPTION" "$@"
+		install_aur_pkg "$PKG" ;;
+
+	-e|--edit)
+		read -rp "$(echo -e "${blue}::${white} Editor: $nc")" editor
+		! [[ $(command -v "$editor") ]] && { echoerr "'$editor': Not found"; exit $EXIT_FAILURE; }
+		"$editor" "${CONFIG_DIR}/${CONFIG_FILE}" ;;
+
+	-h|--help|help) help ;;
+
+	-R|--remove) remove_pkg "$PKG" ;;
+
+	-S|--sync)
+		[[ $EUID -eq 0 ]] && { echoerr "$prog_name: Building packages as root is disallowed because it's unsafe"; exit $EXIT_FAILURE; }
+		aur_agent_check "$OPTION" "$@"
+		install_aur_pkg "$PKG" ;;
+
+	-Si|--info)
+		aur_agent_check "$OPTION" "$@"
+		if [[ $auracle_ok -eq 0 ]]; then
+			echoerr "$prog_name: Option only available for 'auracle'"
+			exit $EXIT_FAILURE
+		else
+			/usr/bin/auracle info "$PKG"
+		fi ;;
+
+	-Sn|--search-name)
+		aur_agent_check "$OPTION" "$@"
+		if [[ $auracle_ok -eq 0 ]]; then
+			/usr/bin/package-query -A "$PKG"
+		else
+			/usr/bin/auracle search --searchby=name "^$PKG$"
+		fi ;;
+
+	-Ss|--search)
+		aur_agent_check "$OPTION" "$@"
+		if [[ $auracle_ok -eq 0 ]]; then
+			if ! /usr/bin/package-query -sA $PKG 2>/dev/null; then
+				/usr/bin/package-query -A "$PKG"
+			fi
+		else
+			if ! /usr/bin/auracle search $PKG 2>/dev/null; then
+				/usr/bin/auracle search --searchby=name "^$PKG$"
+			fi
+		fi ;;
+
+	-St|--sync-traditional) 
+		[[ $EUID -eq 0 ]] && { echo "$prog_name: Building packages as root is disallowed because it's unsafe"; exit $EXIT_FAILURE; }
+		aur_agent_check "$OPTION" "$@"
+		down_method="traditional"
+		install_aur_pkg "$PKG" ;;
+
+	-Sw|--download-only) 
+		aur_agent_check "$OPTION" "$@"
+		download_pkg "$PKG" ;;
+
+	-u|--updates)
+		aur_agent_check "$OPTION" "$@"
+		if [[ $auracle_ok -eq 1 ]]; then
+			/usr/bin/auracle sync
+		else
+			/usr/bin/package-query -Au
+		fi ;;
+		
+	-v|--version) show_version ;;
+
+	*)
+		echoerr "Invalid option -- '${OPTION//-}'
+Try '$prog_name -h' for help"
+		exit $EXIT_FAILURE ;;
+esac
+
+exit $EXIT_SUCCESS
